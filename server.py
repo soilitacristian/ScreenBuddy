@@ -21,7 +21,7 @@ import time
 
 import mss
 import numpy as np
-from mcp.server.fastmcp import FastMCP, Image
+from mcp.server.fastmcp import Context, FastMCP, Image
 from PIL import Image as PILImage, ImageDraw
 
 import settings
@@ -43,6 +43,7 @@ SETTLE_SECONDS = float(os.environ.get("BUDDY_SETTLE_SECONDS", "3"))
 MAX_SIDE = int(os.environ.get("BUDDY_MAX_SIDE", "1400"))
 ZOOM_W, ZOOM_H = 900, 560
 STALE_EVENT_SECONDS = 120
+HEARTBEAT_SECONDS = 60
 
 SAMPLE_RATE = 16000
 BLOCK = 480  # 30 ms
@@ -629,7 +630,7 @@ mcp = FastMCP("screen-buddy", instructions=LOOP_PROTOCOL)
 
 
 @mcp.tool()
-async def wait_for_event(timeout_seconds: int = 50) -> list:
+async def wait_for_event(timeout_seconds: int = 50, ctx: Context = None) -> list:
     """Block until the user speaks or their screen changes and settles (a coaching check-in).
     Returns what happened plus the screen, depending on the vision setting: nothing but the window
     title for speech (auto; call `look` if needed), a full screenshot (cursor circled in red) and a
@@ -640,8 +641,23 @@ async def wait_for_event(timeout_seconds: int = 50) -> list:
     import asyncio
 
     cancelled = threading.Event()
+    # Clients abort tools that stay silent too long (Claude Code: 30 min), so send a progress
+    # heartbeat. Without a progress token the heartbeat can't be sent; then give up after 25 min.
+    has_token = bool(ctx and ctx.request_context.meta and ctx.request_context.meta.progressToken is not None)
+    give_up = None if has_token else time.time() + 25 * 60
+    worker = asyncio.ensure_future(asyncio.to_thread(_wait_for_event, timeout_seconds, cancelled))
     try:
-        return await asyncio.to_thread(_wait_for_event, timeout_seconds, cancelled)
+        beats = 0
+        while True:
+            done, _ = await asyncio.wait({worker}, timeout=HEARTBEAT_SECONDS)
+            if done:
+                return worker.result()
+            if give_up and time.time() > give_up:
+                cancelled.set()
+                return ["Nothing happened. Call wait_for_event again."]
+            beats += 1
+            if has_token:
+                await ctx.report_progress(beats, message="waiting for the user")
     except asyncio.CancelledError:
         cancelled.set()  # the worker gives back any event it takes after this
         raise
