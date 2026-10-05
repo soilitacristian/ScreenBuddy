@@ -4,22 +4,32 @@ Local MCP server that lets any MCP-capable AI client see your screen (following 
 hear you, and talk back. The model runs on that client's own login/subscription — no API key.
 
 Tools: `wait_for_event` (blocks until you speak or your screen settles after a change),
-`look`, `speak`, `set_coaching`, `stop`. Prompt: `buddy` (starts the loop).
+`look`, `speak`, `set_coaching`, `open_settings`, `stop`. Prompts: `buddy` (starts the loop),
+`settings` (opens the settings window).
 
 Mic and screen watching only start on the first `wait_for_event` call. Speech-to-text
-(faster-whisper) and text-to-speech (Windows voice) run fully locally.
+(faster-whisper) and text-to-speech (Kokoro, or the Windows voice) run fully locally.
 
 ## Install (Windows, Python 3.10+)
 ```
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 Creates `.venv`, installs `requirements.txt`, and registers the server with Claude Code.
-To enable push-to-talk, add `-e BUDDY_PTT_KEY=PAUSE` (or another key) to the `claude mcp add` line.
+Pick a push-to-talk key and voice in the settings window (below).
 
 ## Start it
 - **Claude Code:** `/mcp__screen-buddy__buddy` (or just say "start screen buddy")
 - **Codex CLI:** "start screen buddy and follow its loop instructions"
 - Press Esc to end the loop; say "be quieter" to make it comment less.
+
+## Settings window
+- **Claude Code:** `/mcp__screen-buddy__settings`, or just ask the buddy to "open settings"
+- **Any client / by hand:** `.venv\Scripts\pythonw.exe settings_ui.py`
+
+Choose the voice engine and Kokoro voice (with a ▶ Preview), speed, push-to-talk key (click
+the button, then press any key or mouse side button), speech model, language and coaching interval.
+Save writes `settings.json`; the running server applies it within a second, except the speech
+model, which needs a restart (reconnect screen-buddy in `/mcp`).
 
 ## Register with other clients
 Command: `<screen-buddy folder>\.venv\Scripts\python.exe <screen-buddy folder>\server.py`
@@ -31,6 +41,10 @@ Command: `<screen-buddy folder>\.venv\Scripts\python.exe <screen-buddy folder>\s
   `"screen-buddy": {"command": "<python.exe>", "args": ["<server.py>"]}`
 
 ## Settings (env vars)
+Each value is taken from `settings.json` (written by the settings window) first, then the env var,
+then the default — so once you save in the window, it overrides the env vars for those keys.
+Delete `settings.json` to go back to env vars.
+
 | Var | Default | Meaning |
 |---|---|---|
 | BUDDY_COACH_INTERVAL | 60 | min seconds between unprompted check-ins (0 = only when spoken to) |

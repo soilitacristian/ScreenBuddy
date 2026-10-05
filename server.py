@@ -24,6 +24,8 @@ import numpy as np
 from mcp.server.fastmcp import FastMCP, Image
 from PIL import Image as PILImage, ImageDraw
 
+import settings
+
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="[screen-buddy] %(message)s")
 log = logging.getLogger("screen-buddy")
 
@@ -33,18 +35,13 @@ try:
 except Exception:
     pass
 
-# --- configuration (env vars) -------------------------------------------------
-WHISPER_MODEL = os.environ.get("BUDDY_WHISPER_MODEL", "base")  # tiny/base/small/medium
-WHISPER_LANG = os.environ.get("BUDDY_LANGUAGE") or None  # e.g. "en", "ro"; None = auto
-COACH_INTERVAL = float(os.environ.get("BUDDY_COACH_INTERVAL", "60"))  # 0 = only when spoken to
+# --- configuration -------------------------------------------------------------
+# User settings (voice, push-to-talk key, ...) come from settings.py: settings.json > env > default.
+# They are reloaded live when settings.json changes; see settings_watcher.
+cfg = settings.load()
 SETTLE_SECONDS = float(os.environ.get("BUDDY_SETTLE_SECONDS", "3"))
 MAX_SIDE = int(os.environ.get("BUDDY_MAX_SIDE", "1400"))
 ZOOM_W, ZOOM_H = 900, 560
-TTS_ENGINE = os.environ.get("BUDDY_TTS", "kokoro").strip().lower()  # kokoro / windows
-VOICE = os.environ.get("BUDDY_VOICE", "af_heart")  # kokoro voice
-TTS_SPEED = float(os.environ.get("BUDDY_TTS_SPEED", "1.0"))  # kokoro speed
-TTS_RATE = int(os.environ.get("BUDDY_TTS_RATE", "1"))  # Windows voice speed, -10..10
-PTT_KEY = os.environ.get("BUDDY_PTT_KEY", "").strip()  # e.g. RCTRL, F8, MOUSE4, 0xA3; empty = always listening
 STALE_EVENT_SECONDS = 120
 
 SAMPLE_RATE = 16000
@@ -116,11 +113,12 @@ events: "queue.Queue[dict]" = queue.Queue()
 _stop = threading.Event()
 _started = False
 _start_lock = threading.Lock()
-_coach_interval = COACH_INTERVAL
+_coach_interval = cfg["coach_interval"]
 _tts_proc = None
 _tts_lock = threading.Lock()
 _tts_gen = 0  # bumped on every interruption; stale kokoro threads check it and bail
 _kokoro = None
+_kokoro_loading = False
 _kokoro_busy = False  # kokoro is synthesizing or playing
 
 
@@ -159,28 +157,43 @@ def screen_watcher(stop_ev):
             events.put({"kind": "screen", "t": now})
 
 
+# --- settings live reload -------------------------------------------------------------
+def settings_watcher():
+    """Poll settings.json and apply changes without a restart (whisper_model needs one)."""
+    global cfg, _coach_interval
+    last = settings.mtime()
+    while True:
+        time.sleep(1.0)
+        m = settings.mtime()
+        if m == last:
+            continue
+        last = m
+        new = settings.load()
+        changed = {k: v for k, v in new.items() if v != cfg.get(k)}
+        if not changed:
+            continue
+        log.info("settings changed: %s", changed)
+        cfg = new
+        if "coach_interval" in changed:
+            _coach_interval = new["coach_interval"]
+        if "whisper_model" in changed:
+            log.info("whisper model change applies after a restart")
+        if new["tts"] == "kokoro" and _kokoro is None and not _kokoro_loading:
+            threading.Thread(target=load_kokoro, daemon=True, name="load_kokoro").start()
+
+
 # --- microphone + speech-to-text --------------------------------------------------------
-_VK_NAMES = {
-    "LCTRL": 0xA2, "RCTRL": 0xA3, "LSHIFT": 0xA0, "RSHIFT": 0xA1, "LALT": 0xA4, "RALT": 0xA5,
-    "CAPSLOCK": 0x14, "SCROLLLOCK": 0x91, "PAUSE": 0x13, "INSERT": 0x2D,
-    "MOUSE4": 0x05, "MOUSE5": 0x06, "MMB": 0x04,
-}
+_warned_keys = set()
 
 
-def _parse_vk(name):
-    """Virtual-key code for a push-to-talk key name, or None to listen all the time."""
-    if not name:
-        return None
-    n = name.upper()
-    if n in _VK_NAMES:
-        return _VK_NAMES[n]
-    if n.startswith("F") and n[1:].isdigit() and 1 <= int(n[1:]) <= 24:
-        return 0x6F + int(n[1:])
-    try:
-        return int(n, 0)
-    except ValueError:
-        log.warning("unknown BUDDY_PTT_KEY %r; listening all the time", name)
-        return None
+def _ptt_vk():
+    """Current push-to-talk key code, or None to listen all the time. Re-read so settings apply live."""
+    name = cfg["ptt_key"]
+    vk = settings.parse_vk(name)
+    if name and vk is None and name not in _warned_keys:
+        _warned_keys.add(name)
+        log.warning("unknown push-to-talk key %r; listening all the time", name)
+    return vk
 
 
 def key_down(vk):
@@ -191,10 +204,9 @@ def mic_listener(stop_ev):
     import sounddevice as sd
     from faster_whisper import WhisperModel
 
-    log.info("loading whisper model '%s'...", WHISPER_MODEL)
-    model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-    ptt_vk = _parse_vk(PTT_KEY)
-    log.info("listening (%s)", f"push-to-talk: {PTT_KEY}" if ptt_vk is not None else "voice activity")
+    log.info("loading whisper model '%s'...", cfg["whisper_model"])
+    model = WhisperModel(cfg["whisper_model"], device="cpu", compute_type="int8")
+    log.info("listening (%s)", f"push-to-talk: {cfg['ptt_key']}" if _ptt_vk() is not None else "voice activity")
 
     blocks: "queue.Queue[np.ndarray]" = queue.Queue()
 
@@ -203,7 +215,7 @@ def mic_listener(stop_ev):
 
     def transcribe(speech):
         audio = np.concatenate(speech)
-        segs, _ = model.transcribe(audio, language=WHISPER_LANG, vad_filter=True, beam_size=1)
+        segs, _ = model.transcribe(audio, language=cfg["language"] or None, vad_filter=True, beam_size=1)
         text = " ".join(s.text.strip() for s in segs).strip()
         if text.lower() not in HALLUCINATIONS:
             log.info("heard: %s", text)
@@ -217,6 +229,7 @@ def mic_listener(stop_ev):
                 b = blocks.get(timeout=0.5)
             except queue.Empty:
                 continue
+            ptt_vk = _ptt_vk()
             if ptt_vk is not None:
                 if key_down(ptt_vk):
                     if not in_speech:
@@ -280,9 +293,10 @@ KOKORO_LANGS = {"a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr", "h": "hi", 
 
 def load_kokoro():
     """Download (first run only) and load the Kokoro model. Until it is ready, say() uses the Windows voice."""
-    global _kokoro
-    if TTS_ENGINE != "kokoro":
+    global _kokoro, _kokoro_loading
+    if cfg["tts"] != "kokoro" or _kokoro_loading:
         return
+    _kokoro_loading = True
     try:
         import urllib.request
         from kokoro_onnx import Kokoro
@@ -296,13 +310,20 @@ def load_kokoro():
                 urllib.request.urlretrieve(KOKORO_URL + name, path + ".part")
                 os.replace(path + ".part", path)
             paths.append(path)
-        k = Kokoro(*paths)
-        if VOICE not in k.get_voices():
-            raise ValueError(f"unknown voice {VOICE!r}")
-        _kokoro = k
-        log.info("kokoro ready (voice %s)", VOICE)
+        _kokoro = Kokoro(*paths)
+        log.info("kokoro ready (voice %s)", _kokoro_voice())
     except Exception as e:
         log.warning("kokoro unavailable (%s); using the Windows voice", e)
+    finally:
+        _kokoro_loading = False
+
+
+def _kokoro_voice():
+    voice = cfg["voice"]
+    if voice in _kokoro.get_voices():
+        return voice
+    log.warning("unknown kokoro voice %r; using %s", voice, settings.DEFAULTS["voice"])
+    return settings.DEFAULTS["voice"]
 
 
 def _kokoro_say(text, gen):
@@ -310,13 +331,14 @@ def _kokoro_say(text, gen):
     import re
     import sounddevice as sd
 
-    lang = KOKORO_LANGS.get(VOICE[:1], "en-us")
+    voice, speed = _kokoro_voice(), cfg["tts_speed"]
+    lang = KOKORO_LANGS.get(voice[:1], "en-us")
     try:
         # Synthesize sentence by sentence so the first one starts playing quickly.
         for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
             if not sentence:
                 continue
-            samples, sr = _kokoro.create(sentence, voice=VOICE, speed=TTS_SPEED, lang=lang)
+            samples, sr = _kokoro.create(sentence, voice=voice, speed=speed, lang=lang)
             if gen != _tts_gen:
                 return
             sd.wait()  # previous sentence
@@ -338,7 +360,7 @@ _TTS_SCRIPT = (
     "[Console]::InputEncoding=[Text.Encoding]::UTF8;"
     "Add-Type -AssemblyName System.Speech;"
     "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;"
-    f"$s.Rate={TTS_RATE};"
+    "$s.Rate={rate};"
     "$s.Speak([Console]::In.ReadToEnd())"
 )
 
@@ -347,12 +369,12 @@ def say(text):
     global _tts_proc, _kokoro_busy
     stop_speaking()
     with _tts_lock:
-        if _kokoro is not None:
+        if cfg["tts"] == "kokoro" and _kokoro is not None:
             _kokoro_busy = True
             threading.Thread(target=_kokoro_say, args=(text, _tts_gen), daemon=True, name="kokoro").start()
             return
         _tts_proc = subprocess.Popen(
-            ["powershell", "-NoProfile", "-Command", _TTS_SCRIPT],
+            ["powershell", "-NoProfile", "-Command", _TTS_SCRIPT.format(rate=max(-10, min(10, cfg["tts_rate"])))],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -386,7 +408,8 @@ Run this loop until they tell you to stop:
    Never narrate what they are doing. At most one tip per check-in.
 4. If nothing happened, just call `wait_for_event` again.
 Never write long text replies in chat; talk through `speak`. Keep code details for when asked.
-If they say to be quiet or less chatty, call `set_coaching` (0 = only when spoken to)."""
+If they say to be quiet or less chatty, call `set_coaching` (0 = only when spoken to).
+If they ask to change the voice, push-to-talk key or other settings, call `open_settings`."""
 
 mcp = FastMCP("screen-buddy", instructions=LOOP_PROTOCOL)
 
@@ -440,6 +463,23 @@ def set_coaching(interval_seconds: int) -> str:
 
 
 @mcp.tool()
+def open_settings() -> str:
+    """Open the Screen Buddy settings window (voice, push-to-talk key, coaching, speech model)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    subprocess.Popen(
+        [pythonw if os.path.exists(pythonw) else sys.executable, os.path.join(here, "settings_ui.py")],
+        cwd=here,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        close_fds=True,
+    )
+    return "Settings window opened. Saved changes apply live (speech model changes need a restart)."
+
+
+@mcp.tool()
 def stop() -> str:
     """Stop listening to the microphone and watching the screen until wait_for_event is called again."""
     global _started
@@ -456,6 +496,16 @@ def buddy() -> str:
     return LOOP_PROTOCOL + "\n\nStart now: say a quick hello with `speak`, then call `wait_for_event`."
 
 
+@mcp.prompt(name="settings")
+def settings_prompt() -> str:
+    """Open the Screen Buddy settings window."""
+    return (
+        "Call the screen-buddy `open_settings` tool to open the settings window, then tell the user "
+        "in one short line that it is open. If a buddy loop was running, continue it by calling `wait_for_event`."
+    )
+
+
 if __name__ == "__main__":
     threading.Thread(target=load_kokoro, daemon=True, name="load_kokoro").start()
+    threading.Thread(target=settings_watcher, daemon=True, name="settings_watcher").start()
     mcp.run()
