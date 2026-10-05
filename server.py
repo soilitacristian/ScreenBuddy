@@ -90,9 +90,16 @@ def _to_mcp_image(img):
     return Image(data=buf.getvalue(), format="jpeg")
 
 
+# Rough token estimate of screen data sent this server run, for the /compact reminder.
+FULL_TOKENS, CROP_TOKENS = 1100, 700
+_screen_tokens = 0
+
+
 def snapshot(full=True, zoom=True):
     """Full screen (downscaled, cursor marked) and/or a native-res crop around the cursor."""
+    global _screen_tokens
     img, x, y = grab_monitor_under_cursor()
+    _screen_tokens += (FULL_TOKENS if full else 0) + (CROP_TOKENS if zoom else 0)
     out = []
     if full:
         f = img.copy()
@@ -106,6 +113,104 @@ def snapshot(full=True, zoom=True):
         _mark_cursor(z, x - left, y - top, 10)
         out.append(_to_mcp_image(z))
     return out
+
+
+# --- OCR (cheap "text" vision mode, built-in Windows OCR) -----------------------------
+OCR_W = int(os.environ.get("BUDDY_OCR_WIDTH", "1600"))
+OCR_H = int(os.environ.get("BUDDY_OCR_HEIGHT", "900"))
+OCR_SCALE = 2  # upscaling small UI text helps Windows OCR a lot
+_ocr_engine = None
+_ocr_failed = False
+
+
+def foreground_title():
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    buf = ctypes.create_unicode_buffer(512)
+    user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+
+def _ocr(img):
+    """Return [(x, y, h, text)] for each OCR line of a PIL image, in image pixels. Raises if OCR is unavailable."""
+    global _ocr_engine
+    import asyncio
+
+    from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
+    from winrt.windows.media.ocr import OcrEngine
+    from winrt.windows.storage.streams import DataWriter
+
+    if _ocr_engine is None:
+        _ocr_engine = OcrEngine.try_create_from_user_profile_languages()
+        if _ocr_engine is None:
+            raise RuntimeError("no OCR language installed")
+    big = img.resize((img.width * OCR_SCALE, img.height * OCR_SCALE), PILImage.LANCZOS)
+    r, g, b = big.convert("RGB").split()
+    w = DataWriter()
+    w.write_bytes(PILImage.merge("RGBA", (b, g, r, PILImage.new("L", big.size, 255))).tobytes())
+    bmp = SoftwareBitmap.create_copy_from_buffer(w.detach_buffer(), BitmapPixelFormat.BGRA8, big.width, big.height)
+    res = asyncio.run(_ocr_engine.recognize_async(bmp))
+    out = []
+    for line in res.lines:
+        rects = [wd.bounding_rect for wd in line.words]
+        if rects:
+            x, y = min(r.x for r in rects), min(r.y for r in rects)
+            h = max(r.y + r.height for r in rects) - y
+            out.append((x / OCR_SCALE, y / OCR_SCALE, h / OCR_SCALE, " ".join(line.text.split())))
+    return out
+
+
+def text_snapshot():
+    """Window title + OCR text around the cursor, rows in reading order, cursor row marked with >>.
+    Returns None if OCR is unavailable (caller falls back to the crop image)."""
+    global _ocr_failed
+    if _ocr_failed:
+        return None
+    img, x, y = grab_monitor_under_cursor()
+    left = min(max(0, x - OCR_W // 2), max(0, img.width - OCR_W))
+    top = min(max(0, y - OCR_H // 2), max(0, img.height - OCR_H))
+    region = img.crop((left, top, min(img.width, left + OCR_W), min(img.height, top + OCR_H)))
+    try:
+        lines = _ocr(region)
+    except Exception as e:
+        _ocr_failed = True
+        log.warning("OCR unavailable (%s); using the cursor crop image instead", e)
+        return None
+    # Merge OCR lines that sit on the same visual row (e.g. editor gutter + code, side-by-side panes).
+    rows = []
+    for lx, ly, lh, text in sorted(lines, key=lambda l: l[1]):
+        if rows and abs(ly - rows[-1]["y"]) < max(lh, rows[-1]["h"]) * 0.5:
+            rows[-1]["parts"].append((lx, text))
+        else:
+            rows.append({"y": ly, "h": lh, "parts": [(lx, text)]})
+    cy = y - top
+    nearest = min(range(len(rows)), key=lambda i: abs(rows[i]["y"] + rows[i]["h"] / 2 - cy), default=-1)
+    body = []
+    for i, row in enumerate(rows):
+        text = "   ".join(t for _, t in sorted(row["parts"]))
+        body.append((">> " if i == nearest else "   ") + text)
+    return (
+        f'Window: "{foreground_title()}"\n'
+        f"Cursor at ({x}, {y}) on a {img.width}x{img.height} screen. "
+        f"OCR of the {region.width}x{region.height} area around it (>> = row under the cursor):\n"
+        + ("\n".join(body) if body else "(no text found)")
+    )
+
+
+def vision_snapshot():
+    """What wait_for_event attaches, per the `vision` setting: images / crop / text."""
+    global _screen_tokens
+    mode = cfg["vision"]
+    hint = "\n(Call `look` for a full screenshot if you need to see layout or visuals.)"
+    if mode == "text":
+        text = text_snapshot()
+        if text is not None:
+            _screen_tokens += len(text + hint) // 4
+            return [text + hint]
+        mode = "crop"
+    if mode == "crop":
+        return [hint.strip(), *snapshot(full=False)]
+    return snapshot()
 
 
 # --- shared state ---------------------------------------------------------------
@@ -402,7 +507,8 @@ LOOP_PROTOCOL = """You are the user's pair-programming buddy. You can see their 
 Run this loop until they tell you to stop:
 1. Call `wait_for_event`.
 2. If it says the user spoke: answer them with `speak` (short, conversational, 1-3 sentences).
-   "this"/"here" means what is near the red cursor circle in the zoomed image.
+   "this"/"here" means what is near the red cursor circle in the zoomed image
+   (or the row marked >> when you get OCR text instead of images).
 3. If it is a screen check-in: only `speak` if you see something genuinely worth saying
    (a bug, a cleaner idiom, a missed API, a likely mistake). Otherwise stay silent.
    Never narrate what they are doing. At most one tip per check-in.
@@ -417,8 +523,9 @@ mcp = FastMCP("screen-buddy", instructions=LOOP_PROTOCOL)
 @mcp.tool()
 def wait_for_event(timeout_seconds: int = 50) -> list:
     """Block until the user speaks or their screen changes and settles (a coaching check-in).
-    Returns what happened plus a full screenshot (cursor circled in red) and a zoomed crop
-    around the mouse. Returns 'nothing happened' on timeout; just call it again."""
+    Returns what happened plus the screen, depending on the vision setting: a full screenshot
+    (cursor circled in red) and a zoomed crop around the mouse, just the crop, or OCR text around
+    the cursor. Returns 'nothing happened' on timeout; just call it again."""
     ensure_started()
     deadline = time.time() + max(5, min(timeout_seconds, 600))
     while True:
@@ -436,7 +543,21 @@ def wait_for_event(timeout_seconds: int = 50) -> list:
         head = f'The user said: "{ev["text"]}"\nReply with `speak`.'
     else:
         head = "Screen check-in (user paused). Speak only if there is a genuinely useful tip; otherwise wait again."
-    return [head, *snapshot()]
+    return [head + _compact_hint(head), *vision_snapshot()]
+
+
+def _compact_hint(head):
+    """Count text tokens (~chars/4) and, past the threshold, ask the model to suggest /compact."""
+    global _screen_tokens
+    _screen_tokens += len(head) // 4
+    limit = cfg["compact_hint_tokens"]
+    if limit <= 0 or _screen_tokens < limit:
+        return ""
+    sent, _screen_tokens = _screen_tokens, 0
+    return (
+        f"\nContext is getting large (~{sent} screen tokens sent). Briefly suggest to the user via `speak` "
+        "that they run /compact (or /clear if starting something new)."
+    )
 
 
 @mcp.tool()

@@ -18,6 +18,8 @@ DEFAULTS = {
     "coach_interval": 60.0,  # 0 = only when spoken to
     "whisper_model": "base",  # tiny/base/small/medium (needs a restart)
     "language": "",  # e.g. "en", "ro"; "" = auto
+    "vision": "images",  # images (full + crop) / crop (cursor crop only) / text (OCR, no images)
+    "compact_hint_tokens": 60000,  # remind to /compact after ~this many screen tokens; 0 = off
 }
 
 ENV = {
@@ -29,6 +31,8 @@ ENV = {
     "coach_interval": "BUDDY_COACH_INTERVAL",
     "whisper_model": "BUDDY_WHISPER_MODEL",
     "language": "BUDDY_LANGUAGE",
+    "vision": "BUDDY_VISION",
+    "compact_hint_tokens": "BUDDY_COMPACT_HINT_TOKENS",
 }
 
 
@@ -36,7 +40,7 @@ def _coerce(key, value):
     kind = type(DEFAULTS[key])
     if kind is str:
         value = str(value).strip()
-        return value.lower() if key in ("tts", "whisper_model", "language") else value
+        return value.lower() if key in ("tts", "whisper_model", "language", "vision") else value
     return kind(value)
 
 

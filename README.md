@@ -56,3 +56,9 @@ Delete `settings.json` to go back to env vars.
 | BUDDY_TTS_SPEED | 1.0 | Kokoro voice speed |
 | BUDDY_TTS_RATE | 1 | Windows voice speed, -10..10 |
 | BUDDY_PTT_KEY | (empty) | push-to-talk: only listen while this key is held, e.g. `RCTRL`, `F8`, `MOUSE4`, or a hex VK code like `0xA3`. Empty = always listening |
+| BUDDY_VISION | images | what `wait_for_event` sends: `images` (full screenshot + cursor crop), `crop` (cursor crop only), or `text` (window title + Windows OCR of the area around the cursor, no images). `look` always sends images |
+| BUDDY_OCR_WIDTH / BUDDY_OCR_HEIGHT | 1600 / 900 | size of the area around the cursor that `text` mode reads |
+| BUDDY_COMPACT_HINT_TOKENS | 60000 | after ~this many tokens of screen data, the buddy suggests running `/compact` (repeats every N; counter resets when the server restarts). 0 = off |
+
+Rough cost per event: full screenshot ~1.1k tokens, cursor crop ~0.7k, OCR text typically a few hundred.
+Voice and speech-to-text run locally and cost nothing.

@@ -26,6 +26,8 @@ LANG_NAMES = {
 }
 KOKORO_LANGS = {"a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr", "h": "hi", "i": "it", "j": "ja", "p": "pt-br", "z": "cmn"}
 
+VISION_LABELS = {"images": "Images (best)", "crop": "Cursor crop only (cheaper)", "text": "Text via OCR (cheapest)"}
+
 BG, PANEL, FG, MUTED, ACCENT = "#1e1f22", "#2b2d30", "#dfe1e5", "#8c8f94", "#3574f0"
 
 try:
@@ -136,6 +138,14 @@ class App:
         field("Check-in every (s)", ttk.Spinbox(f, from_=0, to=3600, increment=15, textvariable=self.coach, width=6),
               "0 = only when you talk to it")
 
+        self.vision = tk.StringVar(value=VISION_LABELS.get(self.cfg["vision"], VISION_LABELS["images"]))
+        field("Vision", ttk.Combobox(f, textvariable=self.vision, values=list(VISION_LABELS.values()), state="readonly", width=30),
+              "What it sends each time: ~1.8k / ~0.7k / a few hundred tokens")
+
+        self.compact = tk.IntVar(value=int(self.cfg["compact_hint_tokens"]))
+        field("Remind me to /compact after ~N tokens of screen data",
+              ttk.Spinbox(f, from_=0, to=1000000, increment=10000, textvariable=self.compact, width=8), "0 = off")
+
         buttons = ttk.Frame(f)
         buttons.grid(row=row, column=0, columnspan=3, sticky="e", pady=(18, 0))
         ttk.Button(buttons, text="Cancel", command=root.destroy).pack(side="right")
@@ -240,6 +250,11 @@ class App:
             coach, rate = int(self.coach.get()), int(self.rate.get())
         except (tk.TclError, ValueError):
             coach, rate = int(self.cfg["coach_interval"]), self.cfg["tts_rate"]
+        try:
+            compact = int(self.compact.get())
+        except (tk.TclError, ValueError):
+            compact = self.cfg["compact_hint_tokens"]
+        vision = next((k for k, v in VISION_LABELS.items() if v == self.vision.get()), self.cfg["vision"])
         settings.save({
             "tts": self.tts.get(),
             "voice": self._voice_id(),
@@ -249,6 +264,8 @@ class App:
             "coach_interval": max(0, coach),
             "whisper_model": self.whisper.get(),
             "language": self.language.get(),
+            "vision": vision,
+            "compact_hint_tokens": max(0, compact),
         })
         self.root.destroy()
 
