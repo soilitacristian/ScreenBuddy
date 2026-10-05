@@ -4,3 +4,4 @@ pillow
 numpy
 sounddevice
 faster-whisper
+kokoro-onnx

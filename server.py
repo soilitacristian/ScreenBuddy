@@ -40,7 +40,10 @@ COACH_INTERVAL = float(os.environ.get("BUDDY_COACH_INTERVAL", "60"))  # 0 = only
 SETTLE_SECONDS = float(os.environ.get("BUDDY_SETTLE_SECONDS", "3"))
 MAX_SIDE = int(os.environ.get("BUDDY_MAX_SIDE", "1400"))
 ZOOM_W, ZOOM_H = 900, 560
-TTS_RATE = int(os.environ.get("BUDDY_TTS_RATE", "1"))  # -10..10
+TTS_ENGINE = os.environ.get("BUDDY_TTS", "kokoro").strip().lower()  # kokoro / windows
+VOICE = os.environ.get("BUDDY_VOICE", "af_heart")  # kokoro voice
+TTS_SPEED = float(os.environ.get("BUDDY_TTS_SPEED", "1.0"))  # kokoro speed
+TTS_RATE = int(os.environ.get("BUDDY_TTS_RATE", "1"))  # Windows voice speed, -10..10
 PTT_KEY = os.environ.get("BUDDY_PTT_KEY", "").strip()  # e.g. RCTRL, F8, MOUSE4, 0xA3; empty = always listening
 STALE_EVENT_SECONDS = 120
 
@@ -116,10 +119,13 @@ _start_lock = threading.Lock()
 _coach_interval = COACH_INTERVAL
 _tts_proc = None
 _tts_lock = threading.Lock()
+_tts_gen = 0  # bumped on every interruption; stale kokoro threads check it and bail
+_kokoro = None
+_kokoro_busy = False  # kokoro is synthesizing or playing
 
 
 def is_speaking():
-    return _tts_proc is not None and _tts_proc.poll() is None
+    return _kokoro_busy or (_tts_proc is not None and _tts_proc.poll() is None)
 
 
 # --- screen watcher -----------------------------------------------------------------
@@ -265,7 +271,69 @@ def ensure_started():
         _started = True
 
 
-# --- text-to-speech (Windows built-in voice, no account needed) -----------------------
+# --- text-to-speech (Kokoro, local neural voice; falls back to the Windows voice) -------
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+KOKORO_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
+KOKORO_FILES = ("kokoro-v1.0.onnx", "voices-v1.0.bin")  # fp32: int8/fp16 are much slower on CPU
+KOKORO_LANGS = {"a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr", "h": "hi", "i": "it", "j": "ja", "p": "pt-br", "z": "cmn"}
+
+
+def load_kokoro():
+    """Download (first run only) and load the Kokoro model. Until it is ready, say() uses the Windows voice."""
+    global _kokoro
+    if TTS_ENGINE != "kokoro":
+        return
+    try:
+        import urllib.request
+        from kokoro_onnx import Kokoro
+
+        os.makedirs(MODELS_DIR, exist_ok=True)
+        paths = []
+        for name in KOKORO_FILES:
+            path = os.path.join(MODELS_DIR, name)
+            if not os.path.exists(path):
+                log.info("downloading %s...", name)
+                urllib.request.urlretrieve(KOKORO_URL + name, path + ".part")
+                os.replace(path + ".part", path)
+            paths.append(path)
+        k = Kokoro(*paths)
+        if VOICE not in k.get_voices():
+            raise ValueError(f"unknown voice {VOICE!r}")
+        _kokoro = k
+        log.info("kokoro ready (voice %s)", VOICE)
+    except Exception as e:
+        log.warning("kokoro unavailable (%s); using the Windows voice", e)
+
+
+def _kokoro_say(text, gen):
+    global _kokoro_busy
+    import re
+    import sounddevice as sd
+
+    lang = KOKORO_LANGS.get(VOICE[:1], "en-us")
+    try:
+        # Synthesize sentence by sentence so the first one starts playing quickly.
+        for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
+            if not sentence:
+                continue
+            samples, sr = _kokoro.create(sentence, voice=VOICE, speed=TTS_SPEED, lang=lang)
+            if gen != _tts_gen:
+                return
+            sd.wait()  # previous sentence
+            with _tts_lock:
+                if gen != _tts_gen:
+                    return
+                sd.play(samples, sr)
+        sd.wait()
+    except Exception:
+        log.exception("kokoro playback failed")
+    finally:
+        with _tts_lock:
+            if gen == _tts_gen:
+                _kokoro_busy = False
+
+
+# Windows built-in voice, no download needed.
 _TTS_SCRIPT = (
     "[Console]::InputEncoding=[Text.Encoding]::UTF8;"
     "Add-Type -AssemblyName System.Speech;"
@@ -276,10 +344,13 @@ _TTS_SCRIPT = (
 
 
 def say(text):
-    global _tts_proc
+    global _tts_proc, _kokoro_busy
+    stop_speaking()
     with _tts_lock:
-        if is_speaking():
-            _tts_proc.kill()
+        if _kokoro is not None:
+            _kokoro_busy = True
+            threading.Thread(target=_kokoro_say, args=(text, _tts_gen), daemon=True, name="kokoro").start()
+            return
         _tts_proc = subprocess.Popen(
             ["powershell", "-NoProfile", "-Command", _TTS_SCRIPT],
             stdin=subprocess.PIPE,
@@ -292,8 +363,15 @@ def say(text):
 
 
 def stop_speaking():
+    global _tts_gen, _kokoro_busy
     with _tts_lock:
-        if is_speaking():
+        _tts_gen += 1
+        if _kokoro_busy:
+            import sounddevice as sd
+
+            _kokoro_busy = False
+            sd.stop()
+        if _tts_proc is not None and _tts_proc.poll() is None:
             _tts_proc.kill()
 
 
@@ -379,4 +457,5 @@ def buddy() -> str:
 
 
 if __name__ == "__main__":
+    threading.Thread(target=load_kokoro, daemon=True, name="load_kokoro").start()
     mcp.run()

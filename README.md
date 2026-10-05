@@ -37,5 +37,8 @@ Command: `<screen-buddy folder>\.venv\Scripts\python.exe <screen-buddy folder>\s
 | BUDDY_SETTLE_SECONDS | 3 | screen must be still this long before a check-in |
 | BUDDY_WHISPER_MODEL | base | tiny / base / small / medium (bigger = more accurate, slower) |
 | BUDDY_LANGUAGE | auto | force a language, e.g. `en`, `ro` |
-| BUDDY_TTS_RATE | 1 | voice speed, -10..10 |
+| BUDDY_TTS | kokoro | `kokoro` (local neural voice; ~350 MB model downloaded to `models/` on first start) or `windows` (built-in voice). Uses the Windows voice until Kokoro is loaded, or if it fails |
+| BUDDY_VOICE | af_heart | Kokoro voice, e.g. `af_heart`, `af_bella`, `am_michael`, `bf_emma`, `bm_george` |
+| BUDDY_TTS_SPEED | 1.0 | Kokoro voice speed |
+| BUDDY_TTS_RATE | 1 | Windows voice speed, -10..10 |
 | BUDDY_PTT_KEY | (empty) | push-to-talk: only listen while this key is held, e.g. `RCTRL`, `F8`, `MOUSE4`, or a hex VK code like `0xA3`. Empty = always listening |
