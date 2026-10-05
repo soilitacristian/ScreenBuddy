@@ -22,7 +22,7 @@ To enable push-to-talk, add `-e BUDDY_PTT_KEY=PAUSE` (or another key) to the `cl
 - Press Esc to end the loop; say "be quieter" to make it comment less.
 
 ## Register with other clients
-Command: `C:\Users\Cristian\screen-buddy\.venv\Scripts\python.exe C:\Users\Cristian\screen-buddy\server.py`
+Command: `<screen-buddy folder>\.venv\Scripts\python.exe <screen-buddy folder>\server.py`
 
 - Claude Code: `claude mcp add screen-buddy --scope user -- <command>` (done)
 - Codex: `[mcp_servers.screen-buddy]` in `~/.codex/config.toml` (done)
