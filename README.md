@@ -54,7 +54,7 @@ Delete `settings.json` to go back to env vars.
 
 | Var | Default | Meaning |
 |---|---|---|
-| BUDDY_COACH_INTERVAL | 60 | min seconds between unprompted check-ins (0 = only when spoken to) |
+| BUDDY_COACH_INTERVAL | 60 | min seconds between unprompted check-ins (0 = only when spoken to; `wait_for_event` then waits with no timeout, so idle costs no tokens) |
 | BUDDY_SETTLE_SECONDS | 3 | screen must be still this long before a check-in |
 | BUDDY_WHISPER_MODEL | base | tiny / base / small / medium (bigger = more accurate, slower) |
 | BUDDY_LANGUAGE | auto | force a language, e.g. `en`, `ro` |

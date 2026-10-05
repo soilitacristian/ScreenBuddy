@@ -570,15 +570,17 @@ def wait_for_event(timeout_seconds: int = 50) -> list:
     """Block until the user speaks or their screen changes and settles (a coaching check-in).
     Returns what happened plus the screen, depending on the vision setting: a full screenshot
     (cursor circled in red) and a zoomed crop around the mouse, just the crop, or OCR text around
-    the cursor. Returns 'nothing happened' on timeout; just call it again."""
+    the cursor. Returns 'nothing happened' on timeout; just call it again. With coaching off
+    (interval 0) it ignores the timeout and waits until the user speaks, so idle costs nothing."""
     ensure_started()
     deadline = time.time() + max(5, min(timeout_seconds, 600))
     while True:
-        remaining = deadline - time.time()
+        # Re-checked each second so turning coaching off mid-wait takes effect.
+        remaining = 1.0 if _coach_interval == 0 else deadline - time.time()
         if remaining <= 0:
             return ["Nothing happened. Call wait_for_event again."]
         try:
-            ev = events.get(timeout=remaining)
+            ev = events.get(timeout=min(remaining, 1.0))
         except queue.Empty:
             continue
         if time.time() - ev["t"] > STALE_EVENT_SECONDS:
