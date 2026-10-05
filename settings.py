@@ -17,7 +17,7 @@ DEFAULTS = {
     "ptt_key": "",  # push-to-talk key name; "" = always listening
     "coach_interval": 60.0,  # 0 = only when spoken to
     "whisper_model": "base",  # tiny/base/small/medium (needs a restart)
-    "language": "",  # e.g. "en", "ro"; "" = auto
+    "language": "",  # e.g. "en", or "en,ro" = most likely of those; "" = auto
     "vision": "images",  # images (full + crop) / crop (cursor crop only) / text (OCR, no images)
     "compact_hint_tokens": 60000,  # remind to /compact after ~this many screen tokens; 0 = off
     "history_window": True,  # open the conversation history window when the loop starts

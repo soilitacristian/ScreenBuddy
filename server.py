@@ -345,6 +345,21 @@ def key_down(vk):
     return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
 
 
+def pick_language(model, audio):
+    """The `language` setting: "" = auto-detect, "en" = force one, "en,ro" = most likely of those.
+    Restricting the choice stops short clips being transcribed as some random language."""
+    langs = [l.strip() for l in cfg["language"].split(",") if l.strip()]
+    if len(langs) <= 1:
+        return langs[0] if langs else None
+    try:
+        _, _, probs = model.detect_language(audio)
+    except Exception as e:
+        log.warning("language detection failed (%s); using %s", e, langs[0])
+        return langs[0]
+    scores = dict(probs)
+    return max(langs, key=lambda l: scores.get(l, 0.0))
+
+
 def mic_listener(stop_ev):
     import sounddevice as sd
     from faster_whisper import WhisperModel
@@ -360,7 +375,7 @@ def mic_listener(stop_ev):
 
     def transcribe(speech):
         audio = np.concatenate(speech)
-        segs, _ = model.transcribe(audio, language=cfg["language"] or None, vad_filter=True, beam_size=1)
+        segs, _ = model.transcribe(audio, language=pick_language(model, audio), vad_filter=True, beam_size=1)
         text = " ".join(s.text.strip() for s in segs).strip()
         if text.lower() not in HALLUCINATIONS:
             log.info("heard: %s", text)

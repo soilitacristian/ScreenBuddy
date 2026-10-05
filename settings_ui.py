@@ -133,7 +133,7 @@ class App:
               "Bigger = more accurate, slower. Needs a restart (reconnect in /mcp).")
 
         self.language = tk.StringVar(value=self.cfg["language"])
-        field("Language", ttk.Entry(f, textvariable=self.language, width=8), "e.g. en, ro — blank = auto-detect")
+        field("Language", ttk.Entry(f, textvariable=self.language, width=8), "e.g. en, or en,ro to pick between those — blank = auto-detect")
 
         # Coaching
         section("Coaching")
