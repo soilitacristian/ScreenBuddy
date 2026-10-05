@@ -17,7 +17,7 @@ import settings
 HERE = os.path.dirname(os.path.abspath(__file__))
 VOICES_FILE = os.path.join(HERE, "models", "voices-v1.0.bin")
 MODEL_FILE = os.path.join(HERE, "models", "kokoro-v1.0.onnx")
-WHISPER_MODELS = ["tiny", "base", "small", "medium"]
+WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo"]
 SAMPLE_TEXT = "Hi! This is how I'll sound while we work together."
 
 LANG_NAMES = {
@@ -130,10 +130,14 @@ class App:
 
         self.whisper = tk.StringVar(value=self.cfg["whisper_model"])
         field("Speech model", ttk.Combobox(f, textvariable=self.whisper, values=WHISPER_MODELS, state="readonly", width=12),
-              "Bigger = more accurate, slower. Needs a restart (reconnect in /mcp).")
+              "Bigger = more accurate, slower. large-v3-turbo is best with an NVIDIA GPU. Needs a restart (/mcp).")
 
         self.language = tk.StringVar(value=self.cfg["language"])
         field("Language", ttk.Entry(f, textvariable=self.language, width=8), "e.g. en, or en,ro to pick between those — blank = auto-detect")
+
+        self.vocabulary = tk.StringVar(value=self.cfg["vocabulary"])
+        field("Words to expect", ttk.Entry(f, textvariable=self.vocabulary, width=40),
+              "Names and jargon you say, comma-separated; helps it spell them right")
 
         # Coaching
         section("Coaching")
@@ -268,6 +272,7 @@ class App:
             "coach_interval": max(0, coach),
             "whisper_model": self.whisper.get(),
             "language": self.language.get(),
+            "vocabulary": self.vocabulary.get(),
             "vision": vision,
             "compact_hint_tokens": max(0, compact),
             "history_window": bool(self.history.get()),

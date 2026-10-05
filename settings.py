@@ -16,10 +16,11 @@ DEFAULTS = {
     "tts_rate": 1,  # Windows voice speed, -10..10
     "ptt_key": "",  # push-to-talk key name; "" = always listening
     "coach_interval": 60.0,  # 0 = only when spoken to
-    "whisper_model": "base",  # tiny/base/small/medium (needs a restart)
+    "whisper_model": "base",  # tiny/base/small/medium/large-v3-turbo (needs a restart; runs on an NVIDIA GPU if it can)
     "language": "",  # e.g. "en", or "en,ro" = most likely of those; "" = auto
     "vision": "images",  # images (full + crop) / crop (cursor crop only) / text (OCR, no images)
     "compact_hint_tokens": 60000,  # remind to /compact after ~this many screen tokens; 0 = off
+    "vocabulary": "GitHub, Claude, Screen Buddy, MCP, settings, commit, push, Python, VS Code",  # words to expect
     "history_window": True,  # open the conversation history window when the loop starts
 }
 
@@ -34,6 +35,7 @@ ENV = {
     "language": "BUDDY_LANGUAGE",
     "vision": "BUDDY_VISION",
     "compact_hint_tokens": "BUDDY_COMPACT_HINT_TOKENS",
+    "vocabulary": "BUDDY_VOCABULARY",
     "history_window": "BUDDY_HISTORY_WINDOW",
 }
 

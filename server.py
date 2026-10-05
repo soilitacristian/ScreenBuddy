@@ -360,12 +360,40 @@ def pick_language(model, audio):
     return max(langs, key=lambda l: scores.get(l, 0.0))
 
 
-def mic_listener(stop_ev):
-    import sounddevice as sd
+def _add_cuda_dlls():
+    """Make the CUDA libraries from the nvidia-cublas-cu12 / nvidia-cudnn-cu12 wheels loadable."""
+    import glob
+
+    for d in glob.glob(os.path.join(sys.prefix, "Lib", "site-packages", "nvidia", "*", "bin")):
+        os.add_dll_directory(d)
+        os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
+
+
+def load_whisper():
+    """The whisper model on the NVIDIA GPU if possible (much faster, so bigger models are usable), else CPU."""
     from faster_whisper import WhisperModel
 
+    name = cfg["whisper_model"]
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() > 0:
+            _add_cuda_dlls()
+            model = WhisperModel(name, device="cuda", compute_type="float16")
+            model.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32), language="en")  # fails here if CUDA libs are missing
+            log.info("whisper model '%s' on GPU", name)
+            return model
+    except Exception as e:
+        log.warning("GPU unavailable for whisper (%s); using CPU", e)
+    log.info("whisper model '%s' on CPU", name)
+    return WhisperModel(name, device="cpu", compute_type="int8")
+
+
+def mic_listener(stop_ev):
+    import sounddevice as sd
+
     log.info("loading whisper model '%s'...", cfg["whisper_model"])
-    model = WhisperModel(cfg["whisper_model"], device="cpu", compute_type="int8")
+    model = load_whisper()
     log.info("listening (%s)", f"push-to-talk: {cfg['ptt_key']}" if _ptt_vk() is not None else "voice activity")
 
     blocks: "queue.Queue[np.ndarray]" = queue.Queue()
@@ -375,7 +403,8 @@ def mic_listener(stop_ev):
 
     def transcribe(speech):
         audio = np.concatenate(speech)
-        segs, _ = model.transcribe(audio, language=pick_language(model, audio), vad_filter=True, beam_size=1)
+        segs, _ = model.transcribe(audio, language=pick_language(model, audio), vad_filter=True, beam_size=5,
+                                   initial_prompt=cfg["vocabulary"] or None)
         text = " ".join(s.text.strip() for s in segs).strip()
         if text.lower() not in HALLUCINATIONS:
             log.info("heard: %s", text)

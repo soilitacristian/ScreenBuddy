@@ -16,6 +16,10 @@ if (-not (Test-Path $venvPython)) {
 Write-Host 'Installing dependencies...'
 & $venvPython -m pip install --upgrade pip | Out-Null
 & $venvPython -m pip install -r (Join-Path $root 'requirements.txt')
+if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+    Write-Host 'NVIDIA GPU found; installing CUDA libraries for faster speech recognition...'
+    & $venvPython -m pip install nvidia-cublas-cu12 'nvidia-cudnn-cu12==9.*'
+}
 
 if (Get-Command claude -ErrorAction SilentlyContinue) {
     Write-Host 'Registering with Claude Code...'

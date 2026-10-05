@@ -56,7 +56,8 @@ Delete `settings.json` to go back to env vars.
 |---|---|---|
 | BUDDY_COACH_INTERVAL | 60 | min seconds between unprompted check-ins (0 = only when spoken to; `wait_for_event` then waits with no timeout, so idle costs no tokens) |
 | BUDDY_SETTLE_SECONDS | 3 | screen must be still this long before a check-in |
-| BUDDY_WHISPER_MODEL | base | tiny / base / small / medium (bigger = more accurate, slower) |
+| BUDDY_WHISPER_MODEL | base | tiny / base / small / medium / large-v3-turbo (bigger = more accurate, slower). Runs on an NVIDIA GPU when the CUDA libraries are installed (`install.ps1` does it when `nvidia-smi` exists; by hand: `pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"`), where `large-v3-turbo` is both the most accurate and fast. Falls back to the CPU otherwise |
+| BUDDY_VOCABULARY | GitHub, Claude, … | names and jargon you say, comma-separated; passed to whisper as a hint so it spells them right |
 | BUDDY_LANGUAGE | auto | force a language, e.g. `en`, or a list like `en,ro` to pick the likelier of those (stops short clips being misheard as random languages) |
 | BUDDY_TTS | kokoro | `kokoro` (local neural voice; ~350 MB model downloaded to `models/` on first start) or `windows` (built-in voice). Uses the Windows voice until Kokoro is loaded, or if it fails |
 | BUDDY_VOICE | af_heart | Kokoro voice, e.g. `af_heart`, `af_bella`, `am_michael`, `bf_emma`, `bm_george` |
