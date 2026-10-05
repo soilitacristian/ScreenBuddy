@@ -95,10 +95,11 @@ FULL_TOKENS, CROP_TOKENS = 1100, 700
 _screen_tokens = 0
 
 
-def snapshot(full=True, zoom=True):
-    """Full screen (downscaled, cursor marked) and/or a native-res crop around the cursor."""
+def snapshot(full=True, zoom=True, frame=None):
+    """Full screen (downscaled, cursor marked) and/or a native-res crop around the cursor.
+    `frame` is an earlier grab_monitor_under_cursor() result; default is the screen right now."""
     global _screen_tokens
-    img, x, y = grab_monitor_under_cursor()
+    img, x, y = frame or grab_monitor_under_cursor()
     _screen_tokens += (FULL_TOKENS if full else 0) + (CROP_TOKENS if zoom else 0)
     out = []
     if full:
@@ -197,10 +198,26 @@ def text_snapshot():
     )
 
 
-def vision_snapshot():
-    """What wait_for_event attaches, per the `vision` setting: images / crop / text."""
-    global _screen_tokens
+# In "auto" vision mode speech arrives without a screenshot, and the model calls `look` only if the
+# question needs the screen. The screen is still captured (locally, free) the moment the user
+# speaks, so "this"/"here" refer to where the cursor was then, not where it is a few seconds later.
+SPEECH_FRAME_SECONDS = 20
+_speech_frame = None  # (time, frame)
+
+
+def vision_snapshot(kind):
+    """What wait_for_event attaches, per the `vision` setting: auto / images / crop / text."""
+    global _screen_tokens, _speech_frame
     mode = cfg["vision"]
+    if mode == "auto":
+        if kind == "speech":
+            _speech_frame = (time.time(), grab_monitor_under_cursor())
+            note = (f'Active window: "{foreground_title()}". No screenshot attached. If answering needs the '
+                    "screen (\"this\", \"here\", code, an error, anything visible), call `look` first; it shows "
+                    "the screen as it was when they spoke. For follow-ups or general questions, just answer.")
+            _screen_tokens += len(note) // 4
+            return [note]
+        mode = "crop"  # a screen check-in is about the screen
     hint = "\n(Call `look` for a full screenshot if you need to see layout or visuals.)"
     if mode == "text":
         text = text_snapshot()
@@ -597,6 +614,8 @@ Run this loop until they tell you to stop:
 2. If it says the user spoke: answer them with `speak` (short, conversational, 1-3 sentences).
    "this"/"here" means what is near the red cursor circle in the zoomed image
    (or the row marked >> when you get OCR text instead of images).
+   If no screenshot came with it, call `look` first only when the answer depends on the screen;
+   follow-ups and general questions don't need one.
 3. If it is a screen check-in: only `speak` if you see something genuinely worth saying
    (a bug, a cleaner idiom, a missed API, a likely mistake). Otherwise stay silent.
    Never narrate what they are doing. At most one tip per check-in.
@@ -612,9 +631,9 @@ mcp = FastMCP("screen-buddy", instructions=LOOP_PROTOCOL)
 @mcp.tool()
 async def wait_for_event(timeout_seconds: int = 50) -> list:
     """Block until the user speaks or their screen changes and settles (a coaching check-in).
-    Returns what happened plus the screen, depending on the vision setting: a full screenshot
-    (cursor circled in red) and a zoomed crop around the mouse, just the crop, or OCR text around
-    the cursor. Returns 'nothing happened' on timeout; just call it again. With coaching off
+    Returns what happened plus the screen, depending on the vision setting: nothing but the window
+    title for speech (auto; call `look` if needed), a full screenshot (cursor circled in red) and a
+    zoomed crop around the mouse, just the crop, or OCR text around the cursor. Returns 'nothing happened' on timeout; just call it again. With coaching off
     (interval 0) it ignores the timeout and waits until the user speaks, so idle costs nothing."""
     # FastMCP runs sync tools on its event loop, so a long blocking wait there would stall every
     # other request (open_settings, prompts...). Wait on a worker thread instead.
@@ -652,7 +671,7 @@ def _wait_for_event(timeout_seconds, cancelled):
         head = f'The user said: "{ev["text"]}"\nReply with `speak`.'
     else:
         head = "Screen check-in (user paused). Speak only if there is a genuinely useful tip; otherwise wait again."
-    return [head + _compact_hint(head), *vision_snapshot()]
+    return [head + _compact_hint(head), *vision_snapshot(ev["kind"])]
 
 
 def _compact_hint(head):
@@ -671,9 +690,15 @@ def _compact_hint(head):
 
 @mcp.tool()
 def look(zoom_only: bool = False) -> list:
-    """Take a screenshot right now: full screen with the cursor circled, plus a zoomed crop
-    around the mouse. Set zoom_only to get just the crop."""
-    return snapshot(full=not zoom_only, zoom=True)
+    """Screenshot: full screen with the cursor circled, plus a zoomed crop around the mouse.
+    Right after the user spoke, it shows the screen as it was when they spoke; otherwise right now.
+    Set zoom_only to get just the crop."""
+    global _speech_frame
+    frame = None
+    if _speech_frame and time.time() - _speech_frame[0] < SPEECH_FRAME_SECONDS:
+        frame = _speech_frame[1]
+    _speech_frame = None  # a second look is live
+    return snapshot(full=not zoom_only, zoom=True, frame=frame)
 
 
 @mcp.tool()

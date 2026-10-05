@@ -26,7 +26,7 @@ LANG_NAMES = {
 }
 KOKORO_LANGS = {"a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr", "h": "hi", "i": "it", "j": "ja", "p": "pt-br", "z": "cmn"}
 
-VISION_LABELS = {"images": "Images (best)", "crop": "Cursor crop only (cheaper)", "text": "Text via OCR (cheapest)"}
+VISION_LABELS = {"auto": "Only when needed (recommended)", "images": "Images every time", "crop": "Cursor crop only (cheaper)", "text": "Text via OCR (cheapest)"}
 
 BG, PANEL, FG, MUTED, ACCENT = "#1e1f22", "#2b2d30", "#dfe1e5", "#8c8f94", "#3574f0"
 
@@ -145,9 +145,9 @@ class App:
         field("Check-in every (s)", ttk.Spinbox(f, from_=0, to=3600, increment=15, textvariable=self.coach, width=6),
               "0 = only when you talk to it")
 
-        self.vision = tk.StringVar(value=VISION_LABELS.get(self.cfg["vision"], VISION_LABELS["images"]))
+        self.vision = tk.StringVar(value=VISION_LABELS.get(self.cfg["vision"], VISION_LABELS["auto"]))
         field("Vision", ttk.Combobox(f, textvariable=self.vision, values=list(VISION_LABELS.values()), state="readonly", width=30),
-              "What it sends each time: ~1.8k / ~0.7k / a few hundred tokens")
+              "Per message: ~1.8k tokens only if it needs to look / ~1.8k / ~0.7k / a few hundred")
 
         self.compact = tk.IntVar(value=int(self.cfg["compact_hint_tokens"]))
         field("Remind me to /compact after ~N tokens of screen data",
