@@ -231,6 +231,46 @@ def is_speaking():
     return _kokoro_busy or (_tts_proc is not None and _tts_proc.poll() is None)
 
 
+# --- conversation history (shown by history_ui.py) -------------------------------------
+HERE = os.path.dirname(os.path.abspath(__file__))
+HISTORY_FILE = os.path.join(HERE, "history.jsonl")
+_history_lock = threading.Lock()
+_history_proc = None
+
+
+def log_history(who, text=""):
+    """Append one utterance (who = you / buddy / session) to history.jsonl."""
+    import json
+
+    line = json.dumps({"who": who, "text": text, "t": time.time()}, ensure_ascii=False) + "\n"
+    try:
+        with _history_lock, open(HISTORY_FILE, "a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError as e:
+        log.warning("could not write history: %s", e)
+
+
+def _launch_ui(script):
+    """Start a tkinter window (settings_ui.py / history_ui.py) detached, with the venv's pythonw."""
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    return subprocess.Popen(
+        [pythonw if os.path.exists(pythonw) else sys.executable, os.path.join(HERE, script)],
+        cwd=HERE,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        close_fds=True,
+    )
+
+
+def show_history():
+    """Open the history window unless this server already has one open."""
+    global _history_proc
+    if _history_proc is None or _history_proc.poll() is not None:
+        _history_proc = _launch_ui("history_ui.py")
+
+
 # --- screen watcher -----------------------------------------------------------------
 def _fingerprint():
     img, _, _ = grab_monitor_under_cursor()
@@ -324,6 +364,7 @@ def mic_listener(stop_ev):
         text = " ".join(s.text.strip() for s in segs).strip()
         if text.lower() not in HALLUCINATIONS:
             log.info("heard: %s", text)
+            log_history("you", text)
             events.put({"kind": "speech", "text": text, "t": time.time()})
 
     noise = 0.005
@@ -387,6 +428,8 @@ def ensure_started():
         _run(screen_watcher, _stop)
         _run(mic_listener, _stop)
         _started = True
+        if cfg["history_window"]:
+            show_history()
 
 
 # --- text-to-speech (Kokoro, local neural voice; falls back to the Windows voice) -------
@@ -472,6 +515,7 @@ _TTS_SCRIPT = (
 
 def say(text):
     global _tts_proc, _kokoro_busy
+    log_history("buddy", text)
     stop_speaking()
     with _tts_lock:
         if cfg["tts"] == "kokoro" and _kokoro is not None:
@@ -515,7 +559,8 @@ Run this loop until they tell you to stop:
 4. If nothing happened, just call `wait_for_event` again.
 Never write long text replies in chat; talk through `speak`. Keep code details for when asked.
 If they say to be quiet or less chatty, call `set_coaching` (0 = only when spoken to).
-If they ask to change the voice, push-to-talk key or other settings, call `open_settings`."""
+If they ask to change the voice, push-to-talk key or other settings, call `open_settings`.
+If they want to re-read what was said (history, transcript, captions), call `open_history`."""
 
 mcp = FastMCP("screen-buddy", instructions=LOOP_PROTOCOL)
 
@@ -586,18 +631,15 @@ def set_coaching(interval_seconds: int) -> str:
 @mcp.tool()
 def open_settings() -> str:
     """Open the Screen Buddy settings window (voice, push-to-talk key, coaching, speech model)."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-    subprocess.Popen(
-        [pythonw if os.path.exists(pythonw) else sys.executable, os.path.join(here, "settings_ui.py")],
-        cwd=here,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-        close_fds=True,
-    )
+    _launch_ui("settings_ui.py")
     return "Settings window opened. Saved changes apply live (speech model changes need a restart)."
+
+
+@mcp.tool()
+def open_history() -> str:
+    """Open the conversation history window (everything the user and the buddy said, docked on the right)."""
+    show_history()
+    return "History window opened."
 
 
 @mcp.tool()
@@ -627,6 +669,11 @@ def settings_prompt() -> str:
 
 
 if __name__ == "__main__":
+    try:  # each server run starts a fresh history
+        open(HISTORY_FILE, "w").close()
+    except OSError:
+        pass
+    log_history("session")
     threading.Thread(target=load_kokoro, daemon=True, name="load_kokoro").start()
     threading.Thread(target=settings_watcher, daemon=True, name="settings_watcher").start()
     mcp.run()

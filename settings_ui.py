@@ -115,6 +115,9 @@ class App:
         self.preview_status.pack(side="left", padx=10)
         field("", prev)
 
+        self.history = tk.BooleanVar(value=self.cfg["history_window"])
+        field("History window", ttk.Checkbutton(f, text="Show what we both said in a side window", variable=self.history))
+
         # Listening
         section("Listening")
         self.ptt = tk.StringVar(value=self.cfg["ptt_key"])
@@ -165,6 +168,7 @@ class App:
         s.configure("Hint.TLabel", foreground=MUTED, font=("Segoe UI", 9))
         s.map("TCombobox", fieldbackground=[("readonly", PANEL)], foreground=[("readonly", FG)])
         s.map("TRadiobutton", background=[("active", BG)])
+        s.map("TCheckbutton", background=[("active", BG)])
         self.root.option_add("*TCombobox*Listbox.background", PANEL)
         self.root.option_add("*TCombobox*Listbox.foreground", FG)
 
@@ -266,6 +270,7 @@ class App:
             "language": self.language.get(),
             "vision": vision,
             "compact_hint_tokens": max(0, compact),
+            "history_window": bool(self.history.get()),
         })
         self.root.destroy()
 

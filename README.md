@@ -4,7 +4,7 @@ Local MCP server that lets any MCP-capable AI client see your screen (following 
 hear you, and talk back. The model runs on that client's own login/subscription — no API key.
 
 Tools: `wait_for_event` (blocks until you speak or your screen settles after a change),
-`look`, `speak`, `set_coaching`, `open_settings`, `stop`. Prompts: `buddy` (starts the loop),
+`look`, `speak`, `set_coaching`, `open_settings`, `open_history`, `stop`. Prompts: `buddy` (starts the loop),
 `settings` (opens the settings window).
 
 Mic and screen watching only start on the first `wait_for_event` call. Speech-to-text
@@ -30,6 +30,13 @@ Choose the voice engine and Kokoro voice (with a ▶ Preview), speed, push-to-ta
 the button, then press any key or mouse side button), speech model, language and coaching interval.
 Save writes `settings.json`; the running server applies it within a second, except the speech
 model, which needs a restart (reconnect screen-buddy in `/mcp`).
+
+## History window
+When the loop starts, a window docks to the right edge of the screen showing everything you said
+and everything the buddy said, so you can re-read anything you missed. It is always on top by
+default (untick to let it go behind). Ask the buddy to "show the history" to reopen it, or run
+`.venv\Scripts\pythonw.exe history_ui.py`. Turn it off with "History window" in settings.
+The log is `history.jsonl`, cleared each time the server starts.
 
 ## Register with other clients
 Command: `<screen-buddy folder>\.venv\Scripts\python.exe <screen-buddy folder>\server.py`
@@ -58,6 +65,7 @@ Delete `settings.json` to go back to env vars.
 | BUDDY_PTT_KEY | (empty) | push-to-talk: only listen while this key is held, e.g. `RCTRL`, `F8`, `MOUSE4`, or a hex VK code like `0xA3`. Empty = always listening |
 | BUDDY_VISION | images | what `wait_for_event` sends: `images` (full screenshot + cursor crop), `crop` (cursor crop only), or `text` (window title + Windows OCR of the area around the cursor, no images). `look` always sends images |
 | BUDDY_OCR_WIDTH / BUDDY_OCR_HEIGHT | 1600 / 900 | size of the area around the cursor that `text` mode reads |
+| BUDDY_HISTORY_WINDOW | true | open the conversation history window when the loop starts |
 | BUDDY_COMPACT_HINT_TOKENS | 60000 | after ~this many tokens of screen data, the buddy suggests running `/compact` (repeats every N; counter resets when the server restarts). 0 = off |
 
 Rough cost per event: full screenshot ~1.1k tokens, cursor crop ~0.7k, OCR text typically a few hundred.

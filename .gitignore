@@ -4,3 +4,4 @@ __pycache__/
 models/
 settings.json
 settings.json.tmp
+history.jsonl

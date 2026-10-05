@@ -20,6 +20,7 @@ DEFAULTS = {
     "language": "",  # e.g. "en", "ro"; "" = auto
     "vision": "images",  # images (full + crop) / crop (cursor crop only) / text (OCR, no images)
     "compact_hint_tokens": 60000,  # remind to /compact after ~this many screen tokens; 0 = off
+    "history_window": True,  # open the conversation history window when the loop starts
 }
 
 ENV = {
@@ -33,11 +34,14 @@ ENV = {
     "language": "BUDDY_LANGUAGE",
     "vision": "BUDDY_VISION",
     "compact_hint_tokens": "BUDDY_COMPACT_HINT_TOKENS",
+    "history_window": "BUDDY_HISTORY_WINDOW",
 }
 
 
 def _coerce(key, value):
     kind = type(DEFAULTS[key])
+    if kind is bool:
+        return value if isinstance(value, bool) else str(value).strip().lower() in ("1", "true", "yes", "on")
     if kind is str:
         value = str(value).strip()
         return value.lower() if key in ("tts", "whisper_model", "language", "vision") else value
